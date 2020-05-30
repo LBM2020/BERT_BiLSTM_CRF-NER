@@ -180,14 +180,13 @@ def train(args,model_name_or_path,train_data,train_dataloader,valid_data,valid_d
 def valid(args,model,device,valid_dataloader,valid_data):
 
     #*****开始验证*****
-    preds_list = []
-    results = {}
-    preds = None
-    out_label_ids = None
     pbar = ProgressBar(n_total=len(valid_dataloader), desc="Evaluating")
 
-    labels = []
+    #***存储真实标签和预测***
+    labels_true = []
+    labels_pred = []
     
+    #***绘制loss曲线相关
     all_steps = 0
     valid_steps = []
     valid_losses = []
@@ -204,31 +203,25 @@ def valid(args,model,device,valid_dataloader,valid_data):
             inputs = {'input_ids':batch[0],'attention_mask':batch[1],'token_type_ids':batch[2],'labels':batch[3]}
             outputs = model(**inputs)
 
-            #***计算损失***
+            #***获取每个batch的预测标签***
             logits = outputs[1]#1）tmp_eval_loss是损失函数值。2）logits是模型对验证集的预测概率值，例如二分类时,logits = [0.4,0.6]
-
-            labels.extend(inputs['labels'])#获取每个batch的真实标签，用于计算混淆矩阵
-            preds_list.extend(logits.softmax(-1).detach().cpu().numpy())
+            logits = F.softmax(logits,dim=-1)
+            pre_label = np.argmax(logits.detach().cpu().numpy(),axis=2)
             
-            loss = output[0]
-            valid_losses.append(loss.detach().cpu().numpy())
+            for label in pre_label:
+                labels_pred.extend(label)
+            
+            #***获取每个batch的真实标签***
+            for label in inputs['labels'].detach().cpu().numpy():
+                labels_true.extend(label)
 
         pbar(step)
 
         #***每训练完一个epoch，清空cuda缓存***
     if 'cuda' in str(device):
         torch.cuda.empty_cache()
-    
-    true_label = []
-    for line in np.array(labels):
-        true_label.append(np.array(line.detach().cpu().numpy()))
-    
-    pred_labels = []
-    for line in preds_list:
-        for item in line:
-            pred_labels.append(np.array(np.argmax(item)))
             
-    terget_names = ['一类别','二类别']#一类别对应数据中标签0所对应的实际类别名字，例如数据中类别关系为[‘体育’：0，‘娱乐’：1]，
+    terget_names = ['O','B_PER','I_PER','B_ORG','I_ORG','B_LOC','I_LOC','B_T','I_T']#一类别对应数据中标签0所对应的实际类别名字，例如数据中类别关系为[‘体育’：0，‘娱乐’：1]，
                                      #则target_names = ['体育','娱乐']
     print('')#避免输出信息都在同一行
     print(classification_report(y_true=true_label, y_pred=pred_label, target_names=target_names))

@@ -9,7 +9,7 @@ class processer():
     def __init__(self):
         pass
     def get_labels(self):
-        return ['0','1']
+        return ['O','B_PER','I_PER','B_LOC','I_LOC','B_ORG','I_ORG','B_T','I_T']
 
     def read_txt(self,filename):
         with open(filename,'r') as rf:
@@ -20,9 +20,8 @@ class processer():
         examples = []
         for i,line in enumerate(data):
             guid = f'{i}-{line}'
-            text_a = line.split('\t')[1]
-            text_b = None
-            label = line.split('\t')[3].replace('\n','') if type != 'test' else '0'
+            text_a = ' '.join(line[0])#文本以空格分隔
+            label = line[1] if type != 'test' else '0'
             example = InputExample(guid=guid,text_a=text_a,text_b=text_b,label=label)
             examples.append(example)
         return examples
@@ -64,129 +63,60 @@ class processer():
             if ex_index % 10000 == 0:
                 logger.info("Writing example %d" % (ex_index))
 
-                #***对长文本进行切分，将切分后的每一个子句作为一个单独完整的句子，计算feature***
-                split_text_length = int(len(example.text_a) / split_num)
-                split_features = []
+                inputs = tokenizer.encode_plus(example.text_a,add_special_tokens=False,max_length=max_length)
+                input_ids, token_type_ids = inputs["input_ids"], inputs["token_type_ids"]
 
-                for i in range(split_num):
-                    split_text = example.text_a[split_text_length * i:split_text_length * (i + 1)]
+                #label_ids需要和input_ids长度一致
+                label_ids = [label[map] for label in example.label[:len(input_ids)]]
+                
+                # The mask has 1 for real tokens and 0 for padding tokens. Only real
+                # tokens are attended to.
+                attention_mask = [1 if mask_padding_with_zero else 0] * len(input_ids)
+                input_len = len(input_ids)
+                # Zero-pad up to the sequence length.
+                padding_length = max_length - len(input_ids)
 
-                    inputs = tokenizer.encode_plus(split_text,example.text_b,add_special_tokens=True,max_length=max_length)
-                    input_ids, token_type_ids = inputs["input_ids"], inputs["token_type_ids"]
+                if pad_on_left:
+                    input_ids = ([pad_token] * padding_length) + input_ids
+                    attention_mask = ([0 if mask_padding_with_zero else 1] * padding_length) + attention_mask
+                    token_type_ids = ([pad_token_segment_id] * padding_length) + token_type_ids
+                    label_ids = ([pad_token_segment_id] * padding_length) + label_ids
+                else:
+                    input_ids = input_ids + ([pad_token] * padding_length)
+                    attention_mask = attention_mask + ([0 if mask_padding_with_zero else 1] * padding_length)
+                    token_type_ids = token_type_ids + ([pad_token_segment_id] * padding_length)
+                    label_ids = label_ids + ([pad_token_segment_id] * padding_length)
 
-                    # The mask has 1 for real tokens and 0 for padding tokens. Only real
-                    # tokens are attended to.
-                    attention_mask = [1 if mask_padding_with_zero else 0] * len(input_ids)
-                    input_len = len(input_ids)
-                    # Zero-pad up to the sequence length.
-                    padding_length = max_length - len(input_ids)
+                assert len(input_ids) == max_length, "Error with input length {} vs {}".format(len(input_ids), max_length)
+                assert len(attention_mask) == max_length, "Error with input length {} vs {}".format(len(attention_mask),max_length)
+                assert len(token_type_ids) == max_length, "Error with input length {} vs {}".format(len(token_type_ids), max_length)
+                assert len(label_ids) == max_length, "Error with input length {} vs {}".format(len(label_ids), max_length)
 
-                    if pad_on_left:
-                        input_ids = ([pad_token] * padding_length) + input_ids
-                        attention_mask = ([0 if mask_padding_with_zero else 1] * padding_length) + attention_mask
-                        token_type_ids = ([pad_token_segment_id] * padding_length) + token_type_ids
-                    else:
-                        input_ids = input_ids + ([pad_token] * padding_length)
-                        attention_mask = attention_mask + ([0 if mask_padding_with_zero else 1] * padding_length)
-                        token_type_ids = token_type_ids + ([pad_token_segment_id] * padding_length)
+                if ex_index < 5:
+                    logger.info("*** Example ***")
+                    logger.info("guid: %s" % (example.guid))
+                    logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
+                    logger.info("attention_mask: %s" % " ".join([str(x) for x in attention_mask]))
+                    logger.info("token_type_ids: %s" % " ".join([str(x) for x in token_type_ids]))
+                    logger.info("label: %s (id = %s)" % (example.label, label))
+                    logger.info("input length: %d" % (input_len))
 
-                    assert len(input_ids) == max_length, "Error with input length {} vs {}".format(len(input_ids), max_length)
-                    assert len(attention_mask) == max_length, "Error with input length {} vs {}".format(len(attention_mask),
-                                                                                                        max_length)
-                    assert len(token_type_ids) == max_length, "Error with input length {} vs {}".format(len(token_type_ids),
-                                                                                                        max_length)
-                    if output_mode == "classification":
-                        label = label_map[example.label]
-                    elif output_mode == "regression":
-                        label = float(example.label)
-                    else:
-                        raise KeyError(output_mode)
-
-                    if ex_index < 5:
-                        logger.info("*** Example ***")
-                        logger.info("guid: %s" % (example.guid))
-                        logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
-                        logger.info("attention_mask: %s" % " ".join([str(x) for x in attention_mask]))
-                        logger.info("token_type_ids: %s" % " ".join([str(x) for x in token_type_ids]))
-                        logger.info("label: %s (id = %s)" % (example.label, label))
-                        logger.info("input length: %d" % (input_len))
-
-                    split_features.append(InputFeatures(input_ids=input_ids,
-                              attention_mask=attention_mask,
-                              token_type_ids=token_type_ids,
-                              label=label,
-                              input_len=input_len))#split_features中包含的就是split_num个子句的InputFeatures对象
-
-                features.append(split_features)
-
+                features.append(InputFeatures(input_ids=input_ids,
+                          attention_mask=attention_mask,
+                          token_type_ids=token_type_ids,
+                          label=label,
+                          input_len=input_len))#split_features中包含的就是split_num个子句的InputFeatures对象
         return features
 
     def create_dataset(self,features):
 
-        features_input_ids, features_attention_mask,features_token_type_ids,features_input_len,features_label= [],[],[],[],[]
-        for split_features in features:
-            split_features_input_ids = self.flat(split_features=split_features,f_type='input_ids')
-            features_input_ids.append(split_features_input_ids)
-
-            split_features_attention_mask = self.flat(split_features=split_features, f_type='attention_mask')
-            features_attention_mask.append(split_features_attention_mask)
-
-            split_features_token_type_ids = self.flat(split_features=split_features, f_type='token_type_ids')
-            features_token_type_ids.append(split_features_token_type_ids)
-
-            split_features_input_len = self.flat(split_features=split_features, f_type='input_len')
-            features_input_len.append(split_features_input_len)
-
-            split_features_label = self.flat(split_features=split_features, f_type='label')
-            features_label.append(split_features_label)
-
-        all_input_ids = torch.tensor([input_ids for input_ids in features_input_ids], dtype=torch.long)
-        all_attention_mask = torch.tensor([attention_mask for attention_mask in features_attention_mask], dtype=torch.long)
-        all_token_type_ids = torch.tensor([token_type_ids for token_type_ids in features_token_type_ids], dtype=torch.long)
-        all_lens = torch.tensor([sum(input_len) for input_len in features_input_len], dtype=torch.long)
-        all_labels = torch.tensor([label for label in features_label], dtype=torch.long)
-        print(all_input_ids.shape)
-        print(all_attention_mask.shape)
-        print(all_token_type_ids.shape)
-        print(all_lens.shape)
-        print(all_labels.shape)
-
+        all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
+        all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
+        all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
+        all_lens = torch.tensor([f.input_len for f in features], dtype=torch.long)
+        all_labels = torch.tensor([f.label for f in features], dtype=torch.long)
         dataset = TensorDataset(all_input_ids, all_attention_mask, all_token_type_ids, all_lens, all_labels)
-        return dataset
-
-        #原版
-        # all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
-        # all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
-        # all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
-        # all_lens = torch.tensor([f.input_len for f in features], dtype=torch.long)
-        # all_labels = torch.tensor([f.label for f in features], dtype=torch.long)
-        # dataset = TensorDataset(all_input_ids, all_attention_mask, all_token_type_ids, all_lens, all_labels)
-        # return dataset
-
-    def flat(self,split_features,f_type):
-        split_features_list = []
-        if f_type == 'input_ids':
-            for f in split_features:
-                split_features_list.extend(f.input_ids)
-        elif f_type == 'attention_mask':
-            for f in split_features:
-                split_features_list.extend(f.attention_mask)
-        elif f_type == 'token_type_ids':
-            for f in split_features:
-                split_features_list.extend(f.token_type_ids)
-        elif f_type == 'input_len':
-            for f in split_features:
-                split_features_list.append(f.input_len)
-        elif f_type == 'label':
-            for f in split_features:
-                split_features_list.append(f.label)
-                break
-
-        return split_features_list
-
-
-
-
+        return datase
 
 def collate_fn(batch):
     """
@@ -198,6 +128,7 @@ def collate_fn(batch):
     all_input_ids = all_input_ids[:, :max_len]
     all_attention_mask = all_attention_mask[:, :max_len]
     all_token_type_ids = all_token_type_ids[:, :max_len]
+    all_labels = all_labels[:, :max_len]
     return all_input_ids, all_attention_mask, all_token_type_ids, all_labels
 
 

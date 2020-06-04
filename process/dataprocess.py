@@ -11,6 +11,10 @@ class processer():
     def get_labels(self):
         return ['O','B_PER','I_PER','B_LOC','I_LOC','B_ORG','I_ORG','B_T','I_T']
 
+    def label2id(self,labellist):
+        label2id = {label:i for i,label in enumerate(labellist)}
+        return label2id
+        
     def read_txt(self,filename):
         with open(filename,'r') as rf:
             lines = rf.readlines()
@@ -26,7 +30,7 @@ class processer():
             examples.append(example)
         return examples
 
-    def convert_examples_to_features(self,examples, tokenizer,
+    def convert_examples_to_features(self,type,examples, tokenizer,
                                           max_length=512,
                                           label_list=None,
                                           output_mode=None,
@@ -57,7 +61,8 @@ class processer():
             a list of task-specific ``InputFeatures`` which can be fed to the model.
 
         """
-        label_map = {label: i for i, label in enumerate(label_list)}
+
+        label2id = self.label2id(label_list)
         features = []
         for (ex_index, example) in enumerate(examples):
             if ex_index % 10000 == 0:
@@ -67,7 +72,10 @@ class processer():
                 input_ids, token_type_ids = inputs["input_ids"], inputs["token_type_ids"]
 
                 #label_ids需要和input_ids长度一致
-                label_ids = [label[map] for label in example.label[:len(input_ids)]]
+                if type == 'test':
+                    label_ids = [0 for i in range(len(input_ids))]
+                else:
+                    label_ids = [label[map] for label in example.label[:len(input_ids)]]
                 
                 # The mask has 1 for real tokens and 0 for padding tokens. Only real
                 # tokens are attended to.
@@ -104,7 +112,7 @@ class processer():
                 features.append(InputFeatures(input_ids=input_ids,
                           attention_mask=attention_mask,
                           token_type_ids=token_type_ids,
-                          label=label,
+                          label=label_ids,
                           input_len=input_len))#split_features中包含的就是split_num个子句的InputFeatures对象
         return features
 

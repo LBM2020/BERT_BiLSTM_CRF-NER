@@ -55,7 +55,7 @@ def load_dataset(args,model_name_or_path,type):
 
     data = pro.read_txt(filename=input_file_name_or_path)
     examples = pro.create_examples(data=data, type=type)
-    features = pro.convert_examples_to_features(examples=examples, tokenizer=tokenizer,
+    features = pro.convert_examples_to_features(type = type,examples=examples, tokenizer=tokenizer,
                                                       max_length=max_seq_len, label_list=labellist,
                                                       output_mode='classification')
     dataset = pro.create_dataset(features=features)

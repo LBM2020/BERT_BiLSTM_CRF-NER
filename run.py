@@ -204,8 +204,13 @@ def valid(args,model,device,valid_dataloader,valid_data):
             outputs = model(**inputs)
 
             #***获取每个batch的预测标签***
-            logits = outputs[1]#1）tmp_eval_loss是损失函数值。2）logits是模型对验证集的预测概率值，例如二分类时,logits = [0.4,0.6]
+            logits = outputs[1]#logits的维度[batch,seq_length,label_num]
+            
+            #logits的维度[batch,seq_length,label_num],例如[[[0.1,0.2,0.3,0.4],[0.6,0.3,0.1]]],
+            #最里层数据代表每一个句子中每一个字属于每一个类别的概率
             logits = F.softmax(logits,dim=-1)
+            
+            #pre_label的维度为[batch,seq_length],例如[[0,0,1,2,0],[1,1,0,2]],最里层数据代表每一个句子中每一个字的所属类别
             pre_label = np.argmax(logits.detach().cpu().numpy(),axis=2)
             
             for label in pre_label:
@@ -233,10 +238,11 @@ def predict(predict_model_name_or_path,pre_data,pre_dataloader):
     logger.info('进行预测')
     pro = processer()
     labellist = pro.get_labels()
+    id2label = {i:label for i,label in enumerate(labellist)}
 
     #*****加载模型*****
     logger.info('加载模型')
-    model = BertForSequenceClassification
+    model = BertForTokenClassification
     config = BertConfig.from_pretrained(predict_model_name_or_path,num_labels = len(labellist))
     model = model.from_pretrained(predict_model_name_or_path,config=config)
 
@@ -254,32 +260,34 @@ def predict(predict_model_name_or_path,pre_data,pre_dataloader):
     logger.info('******** Running prediction ********')
     logger.info("  Num examples = %d", len(pre_data))
 
-    preds = None
     pbar = ProgressBar(n_total=len(pre_dataloader), desc="Predicting")
 
     #***进行预测***
+    labels_pred = []
     for step, batch in enumerate(pre_dataloader):
         model.eval()
         batch = tuple(t.to(device) for t in batch)
         with torch.no_grad():
-            inputs = {'input_ids': batch[0],
-                      'token_type_ids' : batch[2],
-                      'attention_mask': batch[1],
-                      'labels': batch[3]}
+            inputs = {'input_ids': batch[0],'token_type_ids' : batch[2],'attention_mask': batch[1],'labels': batch[3]}
             outputs = model(**inputs)
-            _, logits = outputs[:2]
-
-        #***汇总每个batch的预测结果***
-        if preds is None:
-            preds = logits.softmax(-1).detach().cpu().numpy()
-        else:
-            preds = np.append(preds, logits.softmax(-1).detach().cpu().numpy(), axis=0)
+            
+            #***获取测试数据的测试结果***
+            logits = outputs[1]#logits的维度[batch,seq_length,label_num]
+            
+            #logits的维度[batch,seq_length,label_num],例如[[[0.1,0.2,0.3,0.4],[0.6,0.3,0.1]]],
+            #最里层数据代表每一个句子中每一个字属于每一个类别的概率
+            logits = F.softmax(logits,dim=-1)
+            
+            #pre_label的维度为[batch,seq_length],例如[[0,0,1,2,0],[1,1,0,2]],最里层数据代表每一个句子中每一个字的所属类别
+            pre_label = np.argmax(logits.detach().cpu().numpy(),axis=2)
+            
+            #***根据标签和索引之间的映射关系得到每句话中每个字的真实标签***
+            for label in pre_label:
+                items = [id2label[item] for item in list(label)]
+                labels_pred.append(' '.join(items))
+        
         pbar(step)
-
-    predict_label = np.argmax(preds, axis=1)
-    print(preds)
-    print(predict_label)
-    return preds,predict_label
+    return labels_pred
 
 def run(args):
     seed_everything(args.seed)
@@ -307,12 +315,12 @@ def run(args):
         logger.info('测试数据加载完成')
 
         logger.info('开始预测')
-        preds,predict_label = predict(predict_model_name_or_path=args.predict_model_name_or_path,
+        predict_label = predict(predict_model_name_or_path=args.predict_model_name_or_path,
                                       pre_data=pre_data,pre_dataloader=predict_dataloader)
         logger.info('预测完成')
 
         logger.info('将预测结果写入文件')
-        write_pre_result_to_file(args=args,preds=preds,predict_label=predict_label,pre_data=pre_data)
+        write_pre_result_to_file(args=args,predict_label=predict_label)
         logger.info('预测结果写入完成')
 
 
